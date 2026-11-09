@@ -79,32 +79,88 @@ def test_one_changed_byte_is_found_when_every_count_still_agrees(cut):
     assert text == "the records in the tiles are not the records in the source (digest differs)"
 
 
-def test_a_point_in_the_wrong_tile_is_found(cut):
+def tile_pair(out, same):
+    """Two manifest tiles that share a row (same iy) or a column (same ix) and differ in the other."""
+    tiles = json.loads((out / "manifest.json").read_text())["tiles"]
+    other = "ix" if same == "iy" else "iy"
+    for a in tiles:
+        for b in tiles:
+            if a[same] == b[same] and a[other] != b[other]:
+                return a["file"], b["file"]
+    raise AssertionError("the fixture has no such pair of tiles")
+
+
+@pytest.mark.parametrize("same", ["iy", "ix"])
+def test_a_point_in_the_wrong_tile_is_found_when_only_one_index_is_wrong(cut, same):
     src, out, _ = cut
-    a, b = tile_files(out)[1], tile_files(out)[7]
+    a, b = tile_pair(out, same)
     ra, rb = records_of(out, a), records_of(out, b)
     rewrite(out, a, ra[1:])
     rewrite(out, b, np.concatenate([rb, ra[:1]]))
-    text = problems(src, out)
-    assert "lie outside tile" in text
+    assert "1 points lie outside tile" in problems(src, out)
 
 
-def test_a_wrong_bounds_field_is_found(cut):
-    src, out, _ = cut
-    name = tile_files(out)[0]
+def patch_header(out, name, position, fmt, delta):
     raw = bytearray((out / name).read_bytes())
-    struct.pack_into("<d", raw, 179, struct.unpack_from("<d", raw, 179)[0] + 0.001)
+    struct.pack_into(fmt, raw, position, struct.unpack_from(fmt, raw, position)[0] + delta)
     (out / name).write_bytes(bytes(raw))
+
+
+@pytest.mark.parametrize("position", [179, 187, 195, 203, 211, 219])
+def test_a_wrong_bounds_field_is_found(cut, position):
+    src, out, _ = cut
+    patch_header(out, tile_files(out)[0], position, "<d", 0.001)
     assert "header bounds differ" in problems(src, out)
 
 
-def test_a_wrong_per_return_count_is_found(cut):
+@pytest.mark.parametrize("position", [111, 115, 119, 123, 127])
+def test_a_wrong_per_return_count_is_found(cut, position):
+    src, out, _ = cut
+    patch_header(out, tile_files(out)[0], position, "<I", 1)
+    assert "per-return counts" in problems(src, out)
+
+
+@pytest.mark.parametrize("position,label", [(131, "scale"), (155, "offset")])
+def test_a_tile_scale_or_offset_that_differs_from_the_source_is_found(cut, position, label):
+    src, out, _ = cut
+    patch_header(out, tile_files(out)[0], position, "<d", 1.0)
+    assert f": {label} (" in problems(src, out)
+
+
+def test_a_tile_vlr_count_that_differs_from_the_source_is_found(cut):
+    src, out, _ = cut
+    patch_header(out, tile_files(out)[0], 100, "<I", 1)
+    assert ": n_vlr 2 differs from the source 1" in problems(src, out)
+
+
+def test_a_manifest_scale_that_differs_from_the_source_is_found(cut):
+    src, out, _ = cut
+    manifest = json.loads((out / "manifest.json").read_text())
+    manifest["scale"][0] = 0.002
+    (out / "manifest.json").write_text(json.dumps(manifest))
+    assert "manifest scale" in problems(src, out)
+
+
+def test_a_manifest_source_point_count_that_differs_is_found(cut):
+    src, out, _ = cut
+    manifest = json.loads((out / "manifest.json").read_text())
+    manifest["source_points"] += 1
+    (out / "manifest.json").write_text(json.dumps(manifest))
+    assert "manifest says" in problems(src, out)
+
+
+def test_a_tile_file_with_no_points_is_found(cut):
     src, out, _ = cut
     name = tile_files(out)[0]
-    raw = bytearray((out / name).read_bytes())
-    struct.pack_into("<I", raw, 111, struct.unpack_from("<I", raw, 111)[0] + 1)
-    (out / name).write_bytes(bytes(raw))
-    assert "per-return counts" in problems(src, out)
+    rewrite(out, name, records_of(out, name)[:0])
+    assert f"{name}: holds no points" in problems(src, out)
+
+
+@pytest.mark.parametrize("content", ["[]", '{"tiles": [{"file": "tile_0_0.las"}]}'])
+def test_a_manifest_of_the_wrong_shape_is_a_problem_and_not_a_crash(cut, content):
+    src, out, _ = cut
+    (out / "manifest.json").write_text(content)
+    assert "manifest" in problems(src, out)
 
 
 def test_a_changed_vlr_block_is_found(cut):
@@ -169,10 +225,27 @@ def test_digest_ignores_order_and_sees_a_byte_moved_between_records():
     assert check.digest(swapped) != check.digest(rec)
 
 
-def test_digest_arithmetic_wraps_like_64_bit_integers():
-    rec = make_records(0, [1, 2, 3], [4, 5, 6], [7, 8, 9], seed=8)
-    w = check.weights(20, 1)
-    rows = np.frombuffer(rec.tobytes(), dtype=np.uint8).reshape(3, 20)
-    plain = [sum(int(b) * int(x) for b, x in zip(row, w)) % 2**64 for row in rows]
-    got = rows.astype(np.uint64) @ w
-    assert [int(v) for v in got] == plain
+def plain_row_hash(row, weights):
+    """The per-record hash written with Python integers: weighted byte sum, then splitmix64's finalizer."""
+    z = sum(int(b) * int(w) for b, w in zip(row, weights)) % 2**64
+    z ^= z >> 30
+    z = z * 0xBF58476D1CE4E5B9 % 2**64
+    z ^= z >> 27
+    z = z * 0x94D049BB133111EB % 2**64
+    return z ^ (z >> 31)
+
+
+@pytest.mark.parametrize("seed", [1, 2])
+def test_row_hashes_match_a_plain_python_computation(seed):
+    rec = make_records(1, np.arange(6) * 100, np.arange(6), np.arange(6), seed=8)
+    rows = np.frombuffer(rec.tobytes(), dtype=np.uint8).reshape(6, 28)
+    w = check.weights(28, seed)
+    assert [int(v) for v in check.row_hashes(rec, seed)] == [plain_row_hash(r, w) for r in rows]
+
+
+def test_digest_is_two_full_width_sums_of_the_row_hashes():
+    rec = make_records(1, np.arange(300) * 7, np.arange(300), np.arange(300), seed=9)
+    d = check.digest(rec)
+    for seed, got in zip((1, 2), d):
+        assert got == sum(int(v) for v in check.row_hashes(rec, seed)) % 2**64
+    assert min(d) > 2**40

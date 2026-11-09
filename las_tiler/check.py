@@ -64,9 +64,13 @@ def check(src, out_dir, chunk_points=CHUNK):
         report.problems.append(f"manifest.json: {e}")
         return report
 
-    if not isinstance(manifest.get("tiles"), list):
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("tiles"), list):
         report.problems.append("manifest.json has no list of tiles")
         return report
+    for t in manifest["tiles"]:
+        if not isinstance(t, dict) or not {"file", "ix", "iy", "points"} <= set(t):
+            report.problems.append(f"manifest tile entry {t!r} lacks file, ix, iy or points")
+            return report
     if manifest.get("source_points") != header.point_count:
         report.problems.append(f"manifest says {manifest.get('source_points')} source points, file has {header.point_count}")
     for key, want in (("point_format", header.point_format), ("scale", list(header.scale)), ("offset", list(header.offset))):
@@ -108,6 +112,9 @@ def check(src, out_dir, chunk_points=CHUNK):
             report.problems.append(str(e))
             continue
         report.tiles += 1
+        if th.point_count == 0:
+            report.problems.append(f"{t['file']}: holds no points")
+            continue
         for key in ("point_format", "scale", "offset", "n_vlr", "point_offset"):
             if getattr(th, key) != getattr(header, key):
                 report.problems.append(f"{t['file']}: {key} {getattr(th, key)} differs from the source {getattr(header, key)}")
@@ -125,11 +132,10 @@ def check(src, out_dir, chunk_points=CHUNK):
             report.problems.append(f"{t['file']}: {wrong_cell} points lie outside tile ({t['ix']}, {t['iy']})")
         if th.point_count != t["points"]:
             report.problems.append(f"{t['file']}: header counts {th.point_count} points, manifest {t['points']}")
-        if acc.count:
-            if th.by_return != tuple(int(c) for c in acc.by_return):
-                report.problems.append(f"{t['file']}: header per-return counts {th.by_return} differ from the points")
-            if th.bounds != acc.bounds(th.scale, th.offset):
-                report.problems.append(f"{t['file']}: header bounds differ from the points")
+        if th.by_return != tuple(int(c) for c in acc.by_return):
+            report.problems.append(f"{t['file']}: header per-return counts {th.by_return} differ from the points")
+        if th.bounds != acc.bounds(th.scale, th.offset):
+            report.problems.append(f"{t['file']}: header bounds differ from the points")
 
     if report.points != header.point_count:
         report.problems.append(f"tiles hold {report.points} points, the source has {header.point_count}")

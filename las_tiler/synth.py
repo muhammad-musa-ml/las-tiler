@@ -50,6 +50,8 @@ def to_records(x, y, z, rng, point_format):
 
 def write_scene(path, n_points, seed, extent=400.0, point_format=1):
     """Write n_points points to a LAS 1.2 file in chunks, so the file may be larger than memory."""
+    if extent / SCALE[0] >= 2**31:
+        raise ValueError(f"extent {extent} does not fit 32-bit coordinates at scale {SCALE[0]}")
     header = las.Header(
         0, 0, bytes(16), b"las-tiler synth".ljust(32, b"\0"), b"las-tiler".ljust(32, b"\0"),
         1, 2026, las.HEADER_SIZE, 0, point_format, las.RECORD_LENGTHS[point_format], 0,

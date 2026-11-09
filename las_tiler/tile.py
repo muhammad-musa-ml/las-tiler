@@ -11,8 +11,11 @@ DEFAULT_CHUNK = 1_000_000
 
 def tile_units(tile_size, scale):
     """The tile edge in scaled-integer units; it must be a whole number of them."""
-    units = round(tile_size / scale)
-    if units < 1 or abs(units * scale - tile_size) > 1e-9 * max(1.0, tile_size):
+    try:
+        units = round(tile_size / scale)
+    except (OverflowError, ValueError):
+        raise ValueError(f"tile size {tile_size} is not a whole multiple of scale {scale}") from None
+    if units < 1 or abs(units * scale - tile_size) > 1e-6 * scale:
         raise ValueError(f"tile size {tile_size} is not a whole multiple of scale {scale}")
     return units
 
@@ -73,8 +76,13 @@ def tile_file(src, out_dir, tile_size, chunk_points=DEFAULT_CHUNK):
     copied byte for byte; nothing is requantized. The VLR block (CRS and other metadata) is
     copied into every tile.
     """
+    if chunk_points < 1:
+        raise ValueError("chunk must be at least 1 point")
     header, vlr = las.read_header(src)
     units = (tile_units(tile_size, header.scale[0]), tile_units(tile_size, header.scale[1]))
+    if os.path.isdir(out_dir) and any(
+            n == "manifest.json" or (n.startswith("tile_") and n.endswith(".las")) for n in os.listdir(out_dir)):
+        raise ValueError(f"{out_dir} already holds tiles; use an empty directory")
     os.makedirs(out_dir, exist_ok=True)
     lo, hi = scan(src, header, chunk_points)
     manifest = {

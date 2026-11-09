@@ -118,6 +118,35 @@ def test_a_tile_size_that_is_not_a_whole_number_of_scale_steps_is_refused(tmp_pa
         tile.tile_file(src, tmp_path / "out", size)
 
 
+@pytest.mark.parametrize("size,scale,units", [(50.0, 0.001, 50_000), (0.3, 0.1, 3), (1.0, 1.0, 1), (7.0, 0.01, 700)])
+def test_tile_units_accepts_sizes_that_are_whole_multiples_even_when_the_float_product_is_inexact(size, scale, units):
+    assert tile.tile_units(size, scale) == units
+
+
+@pytest.mark.parametrize("size,scale", [(1.0004, 0.001), (0.3001, 0.1), (1000.0000005, 0.001),
+                                        (float("inf"), 0.001), (float("nan"), 0.001)])
+def test_tile_units_refuses_sizes_that_are_not_whole_multiples(size, scale):
+    with pytest.raises(ValueError, match="multiple of scale"):
+        tile.tile_units(size, scale)
+
+
+def test_a_directory_that_already_holds_tiles_is_refused(tmp_path):
+    rec = make_records(1, [0, 5000], [0, 0], [0, 0])
+    src = write(tmp_path / "a.las", rec)
+    tile.tile_file(src, tmp_path / "out", 1.0)
+    before = sorted(os.listdir(tmp_path / "out"))
+    with pytest.raises(ValueError, match="already holds tiles"):
+        tile.tile_file(src, tmp_path / "out", 2.0)
+    assert sorted(os.listdir(tmp_path / "out")) == before
+
+
+@pytest.mark.parametrize("chunk", [0, -5])
+def test_a_chunk_size_below_one_is_refused(tmp_path, chunk):
+    src = write(tmp_path / "a.las", make_records(1, [1, 2], [1, 2], [1, 2]))
+    with pytest.raises(ValueError, match="at least 1"):
+        tile.tile_file(src, tmp_path / "out", 1.0, chunk_points=chunk)
+
+
 class OpenCounter:
     """Stands in for open() inside tile.py and records how many files are open at once."""
 

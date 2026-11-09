@@ -1,6 +1,7 @@
 import hashlib
 
 import numpy as np
+import pytest
 
 from las_tiler import las, synth
 
@@ -36,6 +37,12 @@ def test_scene_has_ground_and_raised_points(tmp_path):
     rec = next(las.iter_chunks(path, header, 20_000))
     assert (rec["classification"] == 2).sum() > 10_000
     assert rec["z"].max() * header.scale[2] > 7.5
+
+
+def test_an_extent_that_does_not_fit_32_bit_coordinates_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="32-bit"):
+        synth.write_scene(tmp_path / "a.las", 10, seed=1, extent=2_200_000.0)
+    assert not (tmp_path / "a.las").exists()
 
 
 def test_an_empty_scene_is_a_valid_file(tmp_path):

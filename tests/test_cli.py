@@ -28,6 +28,20 @@ def test_check_exits_1_and_names_the_problem_for_a_damaged_tile(tmp_path, capsys
     assert "digest differs" in text and text.rstrip().endswith("FAILED")
 
 
+def test_a_missing_source_exits_2_for_check_and_for_tile(tmp_path, capsys):
+    missing = str(tmp_path / "nosuch.las")
+    assert cli.main(["check", missing, str(tmp_path / "t")]) == 2
+    assert cli.main(["tile", missing, str(tmp_path / "t"), "--tile-size", "10"]) == 2
+    assert capsys.readouterr().err.count("error:") == 2
+
+
+def test_an_infinite_tile_size_and_a_zero_chunk_exit_2(tmp_path, capsys):
+    src = str(tmp_path / "a.las")
+    cli.main(["synth", src, "--points", "100", "--seed", "1"])
+    assert cli.main(["tile", src, str(tmp_path / "t1"), "--tile-size", "inf"]) == 2
+    assert cli.main(["tile", src, str(tmp_path / "t2"), "--tile-size", "10", "--chunk", "0"]) == 2
+
+
 def test_a_bad_tile_size_exits_2_with_a_message(tmp_path, capsys):
     src = str(tmp_path / "a.las")
     cli.main(["synth", src, "--points", "100", "--seed", "1"])

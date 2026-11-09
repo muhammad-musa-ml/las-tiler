@@ -22,9 +22,17 @@ def test_field_positions_follow_the_spec(tmp_path):
     path = write(tmp_path / "a.las", rec, scale=(0.01, 0.02, 0.5), offset=(100.0, 200.0, 300.0))
     raw = path.read_bytes()
     assert raw[0:4] == b"LASF"
+    assert struct.unpack_from("<H", raw, 4)[0] == 7  # file source id
+    assert struct.unpack_from("<H", raw, 6)[0] == 1  # global encoding
+    assert raw[8:24] == bytes(range(16))  # project GUID
     assert raw[24:26] == bytes([1, 2])
+    assert raw[26:58].rstrip(b"\0") == b"tests"  # system identifier
+    assert raw[58:90].rstrip(b"\0") == b"las-tiler tests"  # generating software
+    assert struct.unpack_from("<H", raw, 90)[0] == 1  # creation day of year
+    assert struct.unpack_from("<H", raw, 92)[0] == 2026  # creation year
     assert struct.unpack_from("<H", raw, 94)[0] == 227
     assert struct.unpack_from("<I", raw, 96)[0] == 227
+    assert struct.unpack_from("<I", raw, 100)[0] == 0  # number of VLRs
     assert raw[104] == 1
     assert struct.unpack_from("<H", raw, 105)[0] == 28
     assert struct.unpack_from("<I", raw, 107)[0] == 2
@@ -47,7 +55,12 @@ def test_return_counts_ignore_numbers_outside_one_to_five(tmp_path):
 def test_vlr_bytes_come_back_unchanged(tmp_path):
     vlr = bytes(range(60))
     rec = make_records(3, [1, 2], [3, 4], [5, 6], seed=3)
-    header, got = las.read_header(write(tmp_path / "a.las", rec, point_format=3, vlr=vlr))
+    path = write(tmp_path / "a.las", rec, point_format=3, vlr=vlr)
+    raw = path.read_bytes()
+    assert struct.unpack_from("<I", raw, 96)[0] == 227 + 60
+    assert struct.unpack_from("<I", raw, 100)[0] == 1
+    assert raw[227:287] == vlr
+    header, got = las.read_header(path)
     assert got == vlr
     assert header.point_offset == 227 + 60
     assert header.n_vlr == 1
@@ -83,6 +96,24 @@ def test_refuses_a_file_that_is_not_las(good, tmp_path):
 def test_refuses_other_versions(good, tmp_path):
     with pytest.raises(ValueError, match="only 1.2"):
         las.read_header(patched(good, 25, bytes([4]), tmp_path))
+
+
+def test_refuses_another_major_version(good, tmp_path):
+    with pytest.raises(ValueError, match="only 1.2"):
+        las.read_header(patched(good, 24, bytes([2]), tmp_path))
+
+
+def test_refuses_extra_bytes_per_record_even_when_the_file_size_agrees(tmp_path):
+    # Format 0 with a 22-byte record length and 6 extra bytes on disk: the size matches the header, so
+    # the record-length check is the only thing between this file and misaligned reads.
+    rec = make_records(0, [1, 2, 3], [4, 5, 6], [7, 8, 9])
+    path = write(tmp_path / "a.las", rec, point_format=0)
+    raw = bytearray(path.read_bytes())
+    struct.pack_into("<H", raw, 105, 22)
+    out = tmp_path / "extra.las"
+    out.write_bytes(bytes(raw) + bytes(6))
+    with pytest.raises(ValueError, match="record length"):
+        las.read_header(out)
 
 
 def test_refuses_a_truncated_file(good, tmp_path):

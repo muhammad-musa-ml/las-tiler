@@ -5,7 +5,7 @@ from las_tiler import las
 
 def make_header(point_format=1, scale=(0.001, 0.001, 0.001), offset=(0.0, 0.0, 0.0), n_vlr=0):
     return las.Header(
-        0, 0, bytes(16), b"tests".ljust(32, b"\0"), b"las-tiler tests".ljust(32, b"\0"),
+        7, 1, bytes(range(16)), b"tests".ljust(32, b"\0"), b"las-tiler tests".ljust(32, b"\0"),
         1, 2026, las.HEADER_SIZE, n_vlr, point_format, las.RECORD_LENGTHS[point_format], 0,
         (0,) * 5, scale, offset, (0.0,) * 6,
     )
