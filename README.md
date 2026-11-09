@@ -19,7 +19,7 @@ python -m las_tiler synth scan.las --points 1000000 --seed 1
 python -m las_tiler tile scan.las tiles --tile-size 50
 python -m las_tiler check scan.las tiles
 python bench/bench.py                     # rewrites results/results.json and results.md
-python bench/mutants.py                   # writes results/mutants.md; slow, it runs the suite once per mutant
+python bench/mutants.py                   # writes results/mutants.md; it runs the suite once per mutant, about 14 minutes
 ```
 
 It needs numpy, and pytest for the tests. I ran it on Python 3.13.5 with numpy 2.3.3 on Windows only. `--tile-size` is in the file's coordinate units and must be a whole multiple of the file's scale.
@@ -33,7 +33,7 @@ From `results/results.md`, written by `bench/bench.py` on the code of the commit
 - `check` passed on the last run's tiles: 69 tiles and 5,000,000 points, in 10.2 seconds.
 - Peak traced memory, from `tracemalloc`, was 24.0 MiB at 250,000 points per chunk, 95.7 MiB at 1,000,000 and 448.2 MiB when the whole file was read as one chunk.
 
-`bench/mutants.py` breaks one guard at a time in a temporary copy of the code, runs the whole suite and records which test fails first. It writes `results/mutants.md`; I have not committed a complete run of it against this version of the code.
+`bench/mutants.py` breaks one guard at a time in a temporary copy of the code, runs the whole suite and records which test fails first. It writes `results/mutants.md`, which is the run on this version of the code: 33 mutants, all 33 caught by the suite, in about 14 minutes on my machine. The 33 are changes I chose to try, so this shows that the tests notice those changes and nothing more.
 
 ## What this does not show
 

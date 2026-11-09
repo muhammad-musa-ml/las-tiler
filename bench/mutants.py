@@ -1,7 +1,10 @@
 """Break one guard at a time in a copy of the code and record which test notices.
 
 Run from the repository root: python bench/mutants.py
-The repository itself is never edited; every mutant runs in a temporary copy.
+The repository itself is never edited; every mutant runs in a temporary copy, and the run ends
+by checking that no file of the repository changed. A mutant whose anchor text is not found
+exactly once is reported UNRUN and is not counted as killed; a suite that hangs is reported
+HUNG and is not counted as killed either.
 """
 import hashlib
 import os
@@ -10,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
@@ -35,6 +39,7 @@ MUTANTS = [
     ("a directory that already holds tiles is accepted", "las_tiler/tile.py",
      'if os.path.isdir(out_dir) and any(', 'if False and any('),
     ("a chunk size below one is accepted", "las_tiler/tile.py", 'if chunk_points < 1:', 'if False:'),
+    ("a chunk size below one is accepted by the chunk reader", "las_tiler/las.py", 'if chunk_points < 1:', 'if False:'),
     ("OSError is not turned into exit 2", "las_tiler/cli.py",
      'except (ValueError, OSError) as e:', 'except ValueError as e:'),
     ("an extent beyond 32-bit coordinates is accepted", "las_tiler/synth.py",
@@ -81,61 +86,94 @@ MUTANTS = [
 ]
 
 
-def sha(path):
+def md5(path):
     with open(path, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
+        return hashlib.md5(f.read()).hexdigest()
+
+
+def tree_md5(root):
+    """md5 of every file under root by relative path, leaving out git data and caches."""
+    out = {}
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache")]
+        for name in files:
+            path = os.path.join(folder, name)
+            out[os.path.relpath(path, root)] = md5(path)
+    return out
 
 
 def run_tests(cwd):
+    """('pass' | 'fail' | 'hung', first failing test, output)."""
     try:
         p = subprocess.run([sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider"],
                            cwd=cwd, capture_output=True, text=True, timeout=240)
     except subprocess.TimeoutExpired:
-        return 1, "(suite hung: stopped after 240 s)", ""
+        return "hung", "(suite stopped after 240 s)", ""
     failed = re.findall(r"^(?:FAILED|ERROR) (\S+)", p.stdout, re.M)
-    return p.returncode, failed[0] if failed else "", p.stdout
+    return ("pass" if p.returncode == 0 else "fail"), failed[0] if failed else "", p.stdout
+
+
+def try_mutant(copy, rel, old, new):
+    """Break one guard in the copy, run the suite, restore the file; returns (verdict, detail, md5s)."""
+    path = os.path.join(copy, rel)
+    with open(path, newline="") as f:
+        original = f.read()
+    if original.count(old) != 1:
+        return "UNRUN", f"anchor occurs {original.count(old)} times in {rel}", None
+    before = md5(path)
+    with open(path, "w", newline="") as f:
+        f.write(original.replace(old, new))
+    mutated = md5(path)
+    if mutated == before:
+        with open(path, "w", newline="") as f:
+            f.write(original)
+        return "UNRUN", f"the replacement did not change {rel}", None
+    status, failed, _ = run_tests(copy)
+    with open(path, "w", newline="") as f:
+        f.write(original)
+    after = md5(path)
+    if after != before:
+        sys.exit(f"the copy of {rel} was not restored (md5 {before} before, {after} after)")
+    verdict = {"fail": "killed", "pass": "SURVIVED", "hung": "HUNG"}[status]
+    return verdict, failed, (before, mutated, after)
 
 
 def main():
     rows = []
+    repo_before = tree_md5(ROOT)
     with tempfile.TemporaryDirectory(prefix="las_tiler_mut_") as tmp:
         copy = os.path.join(tmp, "copy")
         shutil.copytree(ROOT, copy, ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "results"))
-        code, _, out = run_tests(copy)
-        baseline = out.strip().splitlines()[-1]
-        print("baseline:", baseline, flush=True)
-        if code != 0:
-            sys.exit("baseline fails; no mutant result would mean anything")
+        status, _, out = run_tests(copy)
+        baseline = out.strip().splitlines()[-1] if out.strip() else "(no output)"
+        print("baseline:", status, baseline, flush=True)
+        if status != "pass":
+            sys.exit("baseline does not pass; no mutant result would mean anything")
         for name, rel, old, new in MUTANTS:
-            path = os.path.join(copy, rel)
-            with open(path, newline="") as f:
-                original = f.read()
-            if original.count(old) != 1:
-                sys.exit(f"anchor for '{name}' occurs {original.count(old)} times in {rel}")
-            before = sha(path)
-            with open(path, "w", newline="") as f:
-                f.write(original.replace(old, new))
-            if sha(path) == before:
-                sys.exit(f"'{name}' did not change {rel}")
-            code, failed, _ = run_tests(copy)
-            with open(path, "w", newline="") as f:
-                f.write(original)
-            if sha(path) != before:
-                sys.exit(f"'{name}': the copy was not restored")
-            verdict = "killed" if code != 0 else "SURVIVED"
-            rows.append((name, rel, verdict, failed.split("::")[-1] if failed else ""))
-            print(f"{verdict}: {name} -> {failed}", flush=True)
+            start = time.monotonic()
+            verdict, detail, sums = try_mutant(copy, rel, old, new)
+            seconds = time.monotonic() - start
+            rows.append((name, rel, verdict, detail.split("::")[-1]))
+            md5s = f" md5 before {sums[0]} mutated {sums[1]} restored {sums[2]}" if sums else ""
+            print(f"{verdict}: {name} -> {detail} [{seconds:.0f} s]{md5s}", flush=True)
+    repo_after = tree_md5(ROOT)
+    if repo_after != repo_before:
+        sys.exit("a file of the repository changed during the run")
+    print(f"repository unchanged: {len(repo_after)} files, md5 compared before and after", flush=True)
 
+    count = {v: sum(1 for r in rows if r[2] == v) for v in ("killed", "SURVIVED", "HUNG", "UNRUN")}
+    total = f"{count['killed']} of {len(rows)} killed; {count['SURVIVED']} survived; {count['HUNG']} hung; {count['UNRUN']} not run."
     lines = ["# Mutants", "",
              "Each row breaks one guard in a temporary copy of the code and runs the whole suite with -x.",
              f"Baseline before any change: {baseline}.", "",
              "| what was broken | file | result | first failing test |", "|---|---|---|---|"]
     lines += [f"| {n} | {r} | {v} | {t} |" for n, r, v, t in rows]
-    killed = sum(1 for r in rows if r[2] == "killed")
-    lines += ["", f"{killed} of {len(rows)} killed.", ""]
+    lines += ["", total, ""]
+    print(total, flush=True)
     os.makedirs(os.path.join(ROOT, "results"), exist_ok=True)
     with open(os.path.join(ROOT, "results", "mutants.md"), "w") as f:
         f.write("\n".join(lines))
+    sys.exit(0 if count["killed"] == len(rows) else 1)
 
 
 if __name__ == "__main__":
