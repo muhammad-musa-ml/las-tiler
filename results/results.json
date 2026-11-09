@@ -1,0 +1,92 @@
+{
+ "tile_points": {
+  "smallest_six": [
+   {
+    "ix": 3,
+    "iy": 8,
+    "points": 1
+   },
+   {
+    "ix": 5,
+    "iy": 8,
+    "points": 1
+   },
+   {
+    "ix": 1,
+    "iy": 8,
+    "points": 2
+   },
+   {
+    "ix": 6,
+    "iy": 8,
+    "points": 2
+   },
+   {
+    "ix": 8,
+    "iy": 4,
+    "points": 3
+   },
+   {
+    "ix": 0,
+    "iy": 2,
+    "points": 54236
+   }
+  ],
+  "largest": 190472,
+  "origin_int": [
+   0,
+   0
+  ],
+  "far_edge_int": 400000,
+  "points_on_far_edge": {
+   "x": 3,
+   "y": 6
+  }
+ },
+ "points": 5000000,
+ "seed": 1,
+ "extent_m": 400.0,
+ "tile_size_m": 50.0,
+ "point_format": 1,
+ "file_mb": 140.0,
+ "tiles": 69,
+ "timed_chunk_points": 1000000,
+ "tile_seconds": [
+  6.88,
+  6.71,
+  6.48,
+  7.05,
+  7.65
+ ],
+ "tile_million_points_per_second": {
+  "min": 0.65,
+  "mean": 0.72,
+  "max": 0.77
+ },
+ "check": {
+  "ok": true,
+  "tiles": 69,
+  "points": 5000000,
+  "seconds": 10.2
+ },
+ "memory": [
+  {
+   "chunk_points": 250000,
+   "peak_traced_mib": 24.0
+  },
+  {
+   "chunk_points": 1000000,
+   "peak_traced_mib": 95.7
+  },
+  {
+   "chunk_points": 5000000,
+   "peak_traced_mib": 448.2
+  }
+ ],
+ "machine": {
+  "python": "3.13.5",
+  "numpy": "2.3.3",
+  "system": "Windows",
+  "cpus": 24
+ }
+}
