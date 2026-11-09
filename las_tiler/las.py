@@ -86,6 +86,8 @@ def read_header(path):
 
 def iter_chunks(path, header, chunk_points):
     """Yield the point records in arrays of at most chunk_points."""
+    if chunk_points < 1:
+        raise ValueError("iter_chunks: chunk_points must be positive")  # 0 would never advance
     dtype = record_dtype(header.point_format)
     left = header.point_count
     with open(path, "rb") as f:

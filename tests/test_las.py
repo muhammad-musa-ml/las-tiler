@@ -75,6 +75,15 @@ def test_chunks_cover_every_record_once(tmp_path):
     assert np.concatenate(chunks).tobytes() == rec.tobytes()
 
 
+@pytest.mark.parametrize("chunk", [0, -1])
+def test_a_chunk_size_below_one_is_refused_instead_of_looping_forever(tmp_path, chunk):
+    rec = make_records(1, [1, 2, 3], [1, 2, 3], [1, 2, 3])
+    path = write(tmp_path / "a.las", rec)
+    header, _ = las.read_header(path)
+    with pytest.raises(ValueError, match="must be positive"):
+        next(las.iter_chunks(path, header, chunk))
+
+
 def patched(path, position, value, tmp_path):
     raw = bytearray(path.read_bytes())
     raw[position:position + len(value)] = value
