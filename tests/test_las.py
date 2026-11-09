@@ -104,6 +104,12 @@ def test_refuses_a_record_length_that_does_not_match_the_format(good, tmp_path):
         las.read_header(patched(good, 105, struct.pack("<H", 29), tmp_path))
 
 
+def test_refuses_a_compressed_point_format(good, tmp_path):
+    # LAZ files set the top bit of the point format byte.
+    with pytest.raises(ValueError, match="point format 129"):
+        las.read_header(patched(good, 104, bytes([129]), tmp_path))
+
+
 def test_refuses_a_file_shorter_than_a_header(tmp_path):
     short = tmp_path / "short.las"
     short.write_bytes(b"LASF" + bytes(100))
